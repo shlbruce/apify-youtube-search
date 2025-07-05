@@ -20,12 +20,13 @@ async function main() {
     });
     const page = await context.newPage();
 
-    const maxCount = 50; // <--- Change this to your preferred number
+    const maxCount = 20; // <--- Change this to your preferred number
 
     for (const keyword of keywords) {
         try {
             const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
             await page.goto(url, { waitUntil: 'networkidle' });
+            console.log(`Searching for keyword: ${keyword}`);
             await page.waitForSelector('ytd-video-renderer', { timeout: 10000 });
 
             await page.waitForSelector('#filter-button', { timeout: 2000 }); // Wait until the button is visible
@@ -37,6 +38,7 @@ async function main() {
 
             // Click the "Upload date" filter label
             await page.click('div[title="Sort by upload date"]');
+            console.log(`Applied "Upload date" filter for keyword: ${keyword}`);
             await page.waitForTimeout(5000);
 
 
@@ -55,6 +57,7 @@ async function main() {
                         const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
                         const url = titleElem && titleElem.getAttribute('href') ?
                             'https://www.youtube.com' + titleElem.getAttribute('href') : '';
+                        console.log(`Found video: ${title} - ${url}`);
                         return { title, url };
                     });
                 });
@@ -73,6 +76,7 @@ async function main() {
                 await page.evaluate(() => {
                     window.scrollBy(0, window.innerHeight * 0.9);
                 });
+                console.log(`Scrolled down, current unique videos count: ${videoMap.size}`);
                 await page.waitForTimeout(2000);
 
                 // Break if no new unique videos were added after scroll (end of results)
@@ -80,7 +84,7 @@ async function main() {
                 //if (videoMap.size === prevCount) break;
                 prevCount = videoMap.size;
             }
-
+            console.log(`Found ${videoMap.size} unique videos for keyword "${keyword}"`);
             // --- Build a queue of video links ---
             const detailQueue = Array.from(videoMap.values()).slice(0, maxCount);
 
@@ -94,6 +98,7 @@ async function main() {
                 const videoPage = await context.newPage();
                 await videoPage.goto(video.url, { waitUntil: 'domcontentloaded' });
                 await videoPage.waitForTimeout(2500); // Let content load
+                console.log(`Processing video: ${video.title} - ${video.url}`);
 
                 // Scrape details using page.evaluate for info you want
                 const detail = await videoPage.evaluate(() => {
@@ -164,6 +169,8 @@ async function main() {
                 await Actor.pushData(detail);
                 await videoPage.close();
             }
+
+            console.log(`Finished processing keyword: ${keyword} : ${detailQueue.length} video`);
         }
         catch (err) {
             console.error(`Error while processing keyword "${keyword}":`, err);
