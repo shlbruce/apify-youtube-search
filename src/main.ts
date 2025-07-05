@@ -93,8 +93,12 @@ async function main() {
                 // Skip short URLs or ones missing ID
                 const match = video.url.match(/v=([^&]+)/);
                 const id = match ? match[1] : null;
-                if (!id) continue;
+                if (!id) {
+                    console.warn(`Skipping video with invalid URL: ${video.url}`);
+                    continue;
+                }
 
+                console.log(`Processing video: ${video.title} - ${video.url}`);
                 const videoPage = await context.newPage();
                 await videoPage.goto(video.url, { waitUntil: 'domcontentloaded' });
                 await videoPage.waitForTimeout(2500); // Let content load
