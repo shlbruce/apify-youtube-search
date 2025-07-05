@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "pwa-node",
+        "request": "launch",
+        "name": "Debug Apify Actor",
+        "program": "${workspaceFolder}/dist/main.js",
+        "env": {
+          "APIFY_LOCAL_STORAGE_DIR": "${workspaceFolder}/storage"
+        },
+        "skipFiles": ["<node_internals>/**"],
+        "console": "integratedTerminal",
+        "preLaunchTask": "tsc: build - tsconfig.json",
+        "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      }
+      // You can add more configs here, for example:
+      // ,
+      // {
+      //   "type": "node",
+      //   "request": "launch",
+      //   "name": "Debug Another Script",
+      //   "program": "${workspaceFolder}/anotherScript.js"
+      // }
+    ]
+  }
+  
