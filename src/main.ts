@@ -4,8 +4,6 @@ import { chromium } from 'playwright';
 type VideoResult = { title: string; url: string };
 type Input = { keywords: string[] };
 
-const width = 2560;
-const height = 1440;
 
 async function main() {
     await Actor.init();
@@ -13,10 +11,7 @@ async function main() {
     const keywords: string[] = input?.keywords || [];
 
     //const browser = await chromium.launch({ headless: true });
-    const browser = await chromium.launch({ headless: false, slowMo: 100, args: [`--window-size=${width},${height}`] });
-    const context = await browser.newContext({
-        viewport: { width, height }
-    });
+    const browser = await chromium.launch({ headless: false, slowMo: 100});
     const page = await browser.newPage();
 
     const maxCount = 50; // <--- Change this to your preferred number
