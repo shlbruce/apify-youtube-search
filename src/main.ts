@@ -1,43 +1,47 @@
-// Apify SDK - toolkit for building Apify Actors (Read more at https://docs.apify.com/sdk/js/).
 import { Actor } from 'apify';
-// Web scraping and browser automation library (Read more at https://crawlee.dev)
-import { PuppeteerCrawler } from 'crawlee';
+import { chromium } from 'playwright';
 
-import { router } from './routes.js';
+type VideoResult = { title: string; url: string };
+type Input = { keywords: string[] };
 
-// The init() call configures the Actor for its environment. It's recommended to start every Actor with an init().
-await Actor.init();
+async function main() {
+    await Actor.init(); // <-- FIRST!
+    const input = await Actor.getInput() as Input;
+    const keywords: string[] = input?.keywords || [];
 
-interface Input {
-    startUrls: {
-        url: string;
-        method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'TRACE' | 'OPTIONS' | 'CONNECT' | 'PATCH';
-        headers?: Record<string, string>;
-        userData: Record<string, unknown>;
-    }[];
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+
+    for (const keyword of keywords) {
+        const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
+        await page.goto(url, { waitUntil: 'networkidle' });
+
+        await page.waitForSelector('ytd-video-renderer', { timeout: 10000 });
+
+        const results: VideoResult[] = await page.evaluate(() => {
+            const videos = Array.from(document.querySelectorAll('ytd-video-renderer')).slice(0, 10);
+            return videos.map((v) => {
+                const titleElem = v.querySelector('#video-title') as HTMLAnchorElement | null;
+                const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
+                const url = titleElem && titleElem.getAttribute('href') ?
+                    'https://www.youtube.com' + titleElem.getAttribute('href') : '';
+                return { title, url };
+            });
+        });
+
+        console.log(`Keyword: ${keyword}`);
+        results.forEach((item, idx) => {
+            console.log(`${idx + 1}. ${item.title} - ${item.url}`);
+        });
+
+        await Actor.pushData({ keyword, results });
+    }
+
+    await browser.close();
+    await Actor.exit();
 }
-// Define the URLs to start the crawler with - get them from the input of the Actor or use a default list.
-const { startUrls = ['https://apify.com'] } = (await Actor.getInput<Input>()) ?? {};
 
-// Create a proxy configuration that will rotate proxies from Apify Proxy.
-const proxyConfiguration = await Actor.createProxyConfiguration();
-
-// Create a PuppeteerCrawler that will use the proxy configuration and and handle requests with the router from routes.ts file.
-const crawler = new PuppeteerCrawler({
-    proxyConfiguration,
-    requestHandler: router,
-    launchContext: {
-        launchOptions: {
-            args: [
-                '--disable-gpu', // Mitigates the "crashing GPU process" issue in Docker containers
-                '--no-sandbox', // Mitigates the "sandboxed" process issue in Docker containers
-            ],
-        },
-    },
+main().catch((err) => {
+    console.error('Actor failed:', err);
+    process.exit(1);
 });
-
-// Run the crawler with the start URLs and wait for it to finish.
-await crawler.run(startUrls);
-
-// Gracefully exit the Actor process. It's recommended to quit all Actors with an exit().
-await Actor.exit();
