@@ -8,6 +8,8 @@ type Input = { keywords: string[] };
 const width = 2048;
 const height = 1152;
 
+//PWDEBUG=1 node dist/main.js
+
 async function main() {
     await Actor.init();
     const input = await Actor.getInput() as Input;
@@ -101,12 +103,24 @@ async function main() {
                 console.log(`Processing video: ${video.title} - ${video.url}`);
                 const videoPage = await context.newPage();
                 await videoPage.goto(video.url, { waitUntil: 'domcontentloaded' });
-                await videoPage.waitForTimeout(2500); // Let content load
+                await videoPage.waitForTimeout(3000); // Let content load
                 console.log(`Processing video: ${video.title} - ${video.url}`);
 
+                //debug begin
+                //videoPage.on('console', msg => console.log('[browser]', msg.text()));
+                //debug end
+
+                const expandButton = await videoPage.$('#bottom-row tp-yt-paper-button#expand');
+                if (expandButton) {
+                    await expandButton.click();
+                    await videoPage.waitForTimeout(1000);
+                } else {
+                    console.warn('No expand button found inside #bottom-row.');
+                }
+
                 // Scrape details using page.evaluate for info you want
-                const detail = await videoPage.evaluate(() => {
-                    // Extract channel info and other elements
+                const detail = await videoPage.evaluate(async () => {
+                    //Extract channel info and other elements
                     function getText(sel: string) {
                         const el = document.querySelector(sel);
                         return el ? el.textContent?.trim() : '';
@@ -116,10 +130,17 @@ async function main() {
                         return el ? (el as HTMLElement).getAttribute(attr) : '';
                     }
 
-                    // Video data
-                    const title = getText('h1.title yt-formatted-string');
-                    const description = getText('#description yt-formatted-string') ||
-                        getText('#description-inline-expander yt-formatted-string');
+                    function extractNumber(str: string) {
+                        const match = str.match(/(\d[\d,]*)/); // Finds first sequence of digits (possibly with commas)
+                        if (match) {
+                            // Remove any commas before parsing
+                            return parseInt(match[1].replace(/,/g, ''), 10);
+                        }
+                        return 0;
+                    }
+
+                    const description = getText('#bottom-row ytd-text-inline-expander yt-attributed-string');
+
                     const channelName = getText('ytd-channel-name a');
                     const channelUrl = getAttr('ytd-channel-name a', 'href')
                         ? 'https://www.youtube.com' + getAttr('ytd-channel-name a', 'href')
@@ -127,45 +148,73 @@ async function main() {
                     const channelId = channelUrl.split('/').pop() || '';
                     // Stats
 
+
                     const viewStr = getText('.view-count') || getText('span.view-count');
                     const viewMatch = (viewStr ?? '').replace(/,/g, '').match(/([\d,]+)/);
                     const views = viewMatch ? parseInt(viewMatch[1], 10) : undefined;
 
 
-                    const likesBtn = document.querySelector('ytd-toggle-button-renderer[is-icon-button][aria-pressed] #text') as HTMLElement;
-                    const likes = likesBtn && likesBtn.innerText ? parseInt(likesBtn.innerText.replace(/,/g, ''), 10) : undefined;
+                    // Video data
+                    debugger;
+                    //debug start
+                    const likesDislikes = document.querySelector('#top-row #top-level-buttons-computed');
+                    const likesButton = likesDislikes?.querySelector('like-button-view-model button-view-model button')
+                    const likesString = likesButton?.getAttribute('aria-label');
+                    const likes = likesString ? extractNumber(likesString) : 0;
+                    const dislikesButton = likesDislikes?.querySelector('dislike-button-view-model button-view-model button')
+                    const dislikesString = dislikesButton?.getAttribute('aria-label');
+                    const dislikes = dislikesString ? extractNumber(dislikesString) : 0;
 
-                    const isLive = !!document.querySelector('ytd-badge-supported-renderer .badge-style-type-live-now');
-                    const isPrivate = !!document.querySelector('ytd-privacy-badge-renderer');
+                    const duration = (document.querySelector('meta[itemprop="duration"]') as HTMLMetaElement | null)?.content || null;
+                    const publishDate = (document.querySelector('meta[itemprop="datePublished"]') as HTMLMetaElement | null)?.content || null;
+                    const uploadDate = (document.querySelector('meta[itemprop="uploadDate"]') as HTMLMetaElement | null)?.content || null;
+                    const embedUrl = (document.querySelector('link[itemprop="embedUrl"]') as HTMLLinkElement | null)?.href || null;
+                    const isFamilyFriendly = (document.querySelector('meta[itemprop="isFamilyFriendly"]') as HTMLMetaElement | null)?.content || null;
+                    const keywords = (document.querySelector('meta[name="keywords"]') as HTMLMetaElement | null)?.content || '';
+                    const genre = (document.querySelector('meta[itemprop="genre"]') as HTMLMetaElement | null)?.content || '';
 
-                    // Thumbnails
-                    const thumbUrl = getAttr('link[itemprop="thumbnailUrl"]', 'href') ||
-                        (document.querySelector('meta[property="og:image"]') as HTMLMetaElement)?.content || '';
+                    const liveBlock = document.querySelector('span[itemprop="publication"][itemtype*="BroadcastEvent"]');
+                    const isLive = !!liveBlock?.querySelector('meta[itemprop="isLiveBroadcast"][content="True"]');
+                    const startDate = (liveBlock?.querySelector('meta[itemprop="startDate"]') as HTMLMetaElement | null)?.content || null;
+                    const endDate = (liveBlock?.querySelector('meta[itemprop="endDate"]') as HTMLMetaElement | null)?.content || null;
 
-                    // Dates
-                    const publishDate = getText('#info-strings yt-formatted-string') ||
-                        (document.querySelector('meta[itemprop="datePublished"]') as HTMLMetaElement)?.content || '';
+                    const thumbEl = document.querySelector('span[itemprop="thumbnail"]');
+                    const thumbnailUrl = (thumbEl?.querySelector('link[itemprop="url"]') as HTMLLinkElement | null)?.href || null;
+                    const width = (thumbEl?.querySelector('meta[itemprop="width"]') as HTMLMetaElement | null)?.content || null;
+                    const height = (thumbEl?.querySelector('meta[itemprop="height"]') as HTMLMetaElement | null)?.content || null;
 
                     return {
                         type: 'video',
                         id: new URL(window.location.href).searchParams.get('v') || window.location.pathname.split('/').pop(),
-                        title,
-                        status: 'OK',
+                        title: window.document.title,
                         url: window.location.href,
                         description,
+                        publishDate,
+                        uploadDate,
+                        duration,
                         views,
                         likes,
+                        dislikes,
+                        thumbnail: {
+                            url: thumbnailUrl,
+                            width: width,
+                            height: height
+                        },
                         channel: {
                             id: channelId,
                             name: channelName,
                             url: channelUrl
                         },
+                        embedUrl,
                         isLive,
-                        isPrivate,
-                        thumbnails: thumbUrl
-                            ? [{ url: thumbUrl, width: 1920, height: 1080 }]
-                            : [],
-                        publishDate
+                        isFamilyFriendly,
+                        genre,
+                        keywords: keywords.split(',').map((k) => k.trim()),
+                        live: {
+                            isLive,
+                            startDate,
+                            endDate
+                        }
                     };
                 });
 
