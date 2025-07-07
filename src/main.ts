@@ -106,6 +106,11 @@ async function main() {
                 await videoPage.waitForTimeout(3000); // Let content load
                 console.log(`Processing video: ${video.title} - ${video.url}`);
 
+                await videoPage.evaluate(() => {
+                    window.scrollBy(0, window.innerHeight * 0.3);
+                });
+                await videoPage.waitForTimeout(2000);
+
                 //debug begin
                 //videoPage.on('console', msg => console.log('[browser]', msg.text()));
                 //debug end
@@ -138,6 +143,43 @@ async function main() {
                         }
                         return 0;
                     }
+                    //421K subscribers
+                    function extractSubscriberCount(text: string) {
+                        // Match number part with optional suffix (K, M, B, etc.)
+                        const match = text.match(/^([\d,.]+[KMB]?)\s*subscribers?$/i);
+                        return match ? match[1] : '';
+                    }
+
+                    function parseISODuration(durationStr: string) {
+                        // Example: PT8M24S, PT1H5M, PT45S, PT2H3S, etc.
+                        const regex = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/;
+                        const [, h, m, s] = durationStr.match(regex) || [];
+                        const hours = parseInt(h || '0', 10);
+                        const mins = parseInt(m || '0', 10);
+                        const secs = parseInt(s || '0', 10);
+                    
+                        if (hours) {
+                            // Pad with zeros for mm:ss and hh:mm:ss
+                            return [
+                                hours.toString().padStart(2, '0'),
+                                mins.toString().padStart(2, '0'),
+                                secs.toString().padStart(2, '0')
+                            ].join(':');
+                        } else {
+                            return [
+                                mins.toString().padStart(2, '0'),
+                                secs.toString().padStart(2, '0')
+                            ].join(':');
+                        }
+                    }
+
+                    function removeYouTubeSuffix(title: string) {
+                        const suffix = " - YouTube";
+                        if (title.endsWith(suffix)) {
+                            return title.slice(0, -suffix.length);
+                        }
+                        return title;
+                    }
 
                     const description = getText('#bottom-row ytd-text-inline-expander yt-attributed-string');
 
@@ -146,6 +188,11 @@ async function main() {
                         ? 'https://www.youtube.com' + getAttr('ytd-channel-name a', 'href')
                         : '';
                     const channelId = channelUrl.split('/').pop() || '';
+                    // Video data
+                    debugger;
+                    //debug start
+                    const subscriberCountStr = getText('#above-the-fold #upload-info #owner-sub-count');
+                    const subscribers = subscriberCountStr ? extractSubscriberCount(subscriberCountStr) : 0;
                     // Stats
 
 
@@ -154,9 +201,7 @@ async function main() {
                     const views = viewMatch ? parseInt(viewMatch[1], 10) : undefined;
 
 
-                    // Video data
-                    debugger;
-                    //debug start
+                    
                     const likesDislikes = document.querySelector('#top-row #top-level-buttons-computed');
                     const likesButton = likesDislikes?.querySelector('like-button-view-model button-view-model button')
                     const likesString = likesButton?.getAttribute('aria-label');
@@ -165,7 +210,8 @@ async function main() {
                     const dislikesString = dislikesButton?.getAttribute('aria-label');
                     const dislikes = dislikesString ? extractNumber(dislikesString) : 0;
 
-                    const duration = (document.querySelector('meta[itemprop="duration"]') as HTMLMetaElement | null)?.content || null;
+                    const durationContent = (document.querySelector('meta[itemprop="duration"]') as HTMLMetaElement | null)?.content || null;
+                    const duration = durationContent ? parseISODuration(durationContent) : null;
                     const publishDate = (document.querySelector('meta[itemprop="datePublished"]') as HTMLMetaElement | null)?.content || null;
                     const uploadDate = (document.querySelector('meta[itemprop="uploadDate"]') as HTMLMetaElement | null)?.content || null;
                     const embedUrl = (document.querySelector('link[itemprop="embedUrl"]') as HTMLLinkElement | null)?.href || null;
@@ -182,11 +228,13 @@ async function main() {
                     const thumbnailUrl = (thumbEl?.querySelector('link[itemprop="url"]') as HTMLLinkElement | null)?.href || null;
                     const width = (thumbEl?.querySelector('meta[itemprop="width"]') as HTMLMetaElement | null)?.content || null;
                     const height = (thumbEl?.querySelector('meta[itemprop="height"]') as HTMLMetaElement | null)?.content || null;
+                    const comments = document.querySelector('#comments #count yt-formatted-string')?.textContent || '';
+                    const commentCount = extractNumber(comments);
 
                     return {
                         type: 'video',
                         id: new URL(window.location.href).searchParams.get('v') || window.location.pathname.split('/').pop(),
-                        title: window.document.title,
+                        title: removeYouTubeSuffix(window.document.title),
                         url: window.location.href,
                         description,
                         publishDate,
@@ -195,6 +243,7 @@ async function main() {
                         views,
                         likes,
                         dislikes,
+                        commentCount,
                         thumbnail: {
                             url: thumbnailUrl,
                             width: width,
@@ -203,7 +252,8 @@ async function main() {
                         channel: {
                             id: channelId,
                             name: channelName,
-                            url: channelUrl
+                            url: channelUrl,
+                            subscribers: subscribers
                         },
                         embedUrl,
                         isLive,
