@@ -1,5 +1,6 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
+import { DELAY } from './constants.js';
 
 type VideoResult = { title: string; url: string };
 type Input = { keywords: string[] };
@@ -59,19 +60,17 @@ async function search(page: any, keyword: string, maxCount: number) {
         const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
         await page.goto(url, { waitUntil: 'networkidle' });
         console.log(`Searching for keyword: ${keyword}`);
-        await page.waitForSelector('ytd-video-renderer', { timeout: 10000 });
+        await page.waitForSelector('ytd-video-renderer', { timeout: DELAY.PAGE_LOAD });
 
-        await page.waitForSelector('#filter-button', { timeout: 2000 }); // Wait until the button is visible
         await page.click('#filter-button'); // Click the button
-        await page.waitForTimeout(3000); // Waits 10 seconds (10,000 milliseconds)
 
         // Wait for the filter menu to appear (replace parent selector if needed)
-        await page.waitForSelector('div[title="Sort by upload date"]', { timeout: 2000 });
+        await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
 
         // Click the "Upload date" filter label
         await page.click('div[title="Sort by upload date"]');
         console.log(`Applied "Upload date" filter for keyword: ${keyword}`);
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
 
 
         // Use a Map to keep track of unique videos by URL
@@ -109,7 +108,7 @@ async function search(page: any, keyword: string, maxCount: number) {
                 window.scrollBy(0, window.innerHeight * 0.9);
             });
             console.log(`Scrolled down, current unique videos count: ${videoMap.size}`);
-            await page.waitForTimeout(2000);
+            await page.waitForTimeout(DELAY.SCROLL);
 
             // Break if no new unique videos were added after scroll (end of results)
             // can't do this, because page may contain more videos that are not shown, then after scrolling, no new videos are added
@@ -132,13 +131,13 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
     try {
         const videoPage = await context.newPage();
         await videoPage.goto(video.url, { waitUntil: 'domcontentloaded' });
-        await videoPage.waitForTimeout(3000); // Let content load
+        await videoPage.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD); // Let content load
         console.log(`Processing video: ${video.title} - ${video.url}`);
 
         await videoPage.evaluate(() => {
             window.scrollBy(0, window.innerHeight * 0.3);
         });
-        await videoPage.waitForTimeout(2000);
+        await videoPage.waitForTimeout(DELAY.SCROLL);
 
         //debug begin
         //videoPage.on('console', msg => console.log('[browser]', msg.text()));
@@ -147,7 +146,7 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
         const expandButton = await videoPage.$('#bottom-row tp-yt-paper-button#expand');
         if (expandButton) {
             await expandButton.click();
-            await videoPage.waitForTimeout(1000);
+            await videoPage.waitForTimeout(DELAY.CLICK);
         } else {
             console.warn('No expand button found inside #bottom-row.');
         }
