@@ -1,0 +1,27 @@
+{
+    "title": "YouTube Scraper Input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+      "keywords": {
+        "type": "array",
+        "title": "Search Keywords",    
+        "description": "Keywords to search",
+        "items": { "type": "string" },
+        "editor": "textfield"
+      },
+      "maxCount": {
+        "type": "integer",
+        "title": "Max Results",        
+        "description": "Max videos per keyword"
+      },
+      "startDate": {
+        "type": "string",
+        "format": "date",
+        "title": "Start Date",         
+        "description": "Return videos published from this date (YYYY-MM-DD) to now"
+      }
+    },
+    "required": ["keywords", "maxCount", "startDate"]
+  }
+  
