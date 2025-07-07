@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import { DELAY } from './constants.js';
 
 type VideoResult = { title: string; url: string };
-type Input = { keywords: string[] };
+type Input = { keywords: string[], maxCount: number };
 
 
 const width = 2048;
@@ -15,6 +15,7 @@ async function main() {
     await Actor.init();
     const input = await Actor.getInput() as Input;
     const keywords: string[] = input?.keywords || [];
+    const maxCount: number = input?.maxCount || 20;
 
     //const browser = await chromium.launch({ headless: true });
     const browser = await chromium.launch({ headless: false, slowMo: 100, args: [`--window-size=${width},${height}`] });
@@ -22,8 +23,6 @@ async function main() {
         viewport: { width, height }
     });
     const page = await context.newPage();
-
-    const maxCount = 20; // <--- Change this to your preferred number
 
     for (const keyword of keywords) {
         try {
