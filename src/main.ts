@@ -1,6 +1,7 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
 import { DELAY } from './constants.js';
+import { isYouTubeShortUrl } from './helper.js';
 
 type VideoResult = { title: string; url: string };
 type Input = { keywords: string[], maxCount: number };
@@ -26,19 +27,9 @@ async function main() {
 
     for (const keyword of keywords) {
         try {
-
             const detailQueue: VideoResult[] = await search(page, keyword, maxCount);
             // --- Process detail pages one by one ---
             for (const video of detailQueue) {
-                // Skip short URLs or ones missing ID
-                const match = video.url.match(/v=([^&]+)/);
-                const id = match ? match[1] : null;
-                if (!id) {
-                    console.warn(`Skipping video with invalid URL: ${video.url}`);
-                    continue;
-                }
-
-                
                 await scrapeVideoDetail(context, video);
             }
 
@@ -55,75 +46,71 @@ async function main() {
 }
 
 async function search(page: any, keyword: string, maxCount: number) {
-    try {
-        const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
-        await page.goto(url, { waitUntil: 'networkidle' });
-        console.log(`Searching for keyword: ${keyword}`);
-        await page.waitForSelector('ytd-video-renderer', { timeout: DELAY.PAGE_LOAD });
+    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
+    await page.goto(url, { waitUntil: 'networkidle' });
+    console.log(`Searching for keyword: ${keyword}`);
+    await page.waitForSelector('ytd-video-renderer', { timeout: DELAY.PAGE_LOAD });
 
-        await page.click('#filter-button'); // Click the button
+    await page.click('#filter-button'); // Click the button
 
-        // Wait for the filter menu to appear (replace parent selector if needed)
-        await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
+    // Wait for the filter menu to appear (replace parent selector if needed)
+    await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
 
-        // Click the "Upload date" filter label
-        await page.click('div[title="Sort by upload date"]');
-        console.log(`Applied "Upload date" filter for keyword: ${keyword}`);
-        await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
+    // Click the "Upload date" filter label
+    await page.click('div[title="Sort by upload date"]');
+    console.log(`Applied "Upload date" filter for keyword: ${keyword}`);
+    await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
 
 
-        // Use a Map to keep track of unique videos by URL
-        const videoMap = new Map<string, VideoResult>();
+    // Use a Map to keep track of unique videos by URL
+    const videoMap = new Map<string, VideoResult>();
 
-        // Scroll and collect until maxCount unique videos is reached or no new appear
-        let prevCount = 0;
+    // Scroll and collect until maxCount unique videos is reached or no new appear
+    let prevCount = 0;
 
-        while (videoMap.size < maxCount) {
-            // Extract video results on current page
-            const results: VideoResult[] = await page.evaluate(() => {
-                const videos = Array.from(document.querySelectorAll('ytd-video-renderer'));
-                return videos.map((v) => {
-                    const titleElem = v.querySelector('#video-title') as HTMLAnchorElement | null;
-                    const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
-                    const url = titleElem && titleElem.getAttribute('href') ?
-                        'https://www.youtube.com' + titleElem.getAttribute('href') : '';
-                    console.log(`Found video: ${title} - ${url}`);
-                    return { title, url };
-                });
+    while (videoMap.size < maxCount) {
+        // Extract video results on current page
+        const results: VideoResult[] = await page.evaluate(() => {
+            const videos = Array.from(document.querySelectorAll('ytd-video-renderer'));
+            return videos.map((v) => {
+                const titleElem = v.querySelector('#video-title') as HTMLAnchorElement | null;
+                const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
+                const url = titleElem && titleElem.getAttribute('href') ?
+                    'https://www.youtube.com' + titleElem.getAttribute('href') : '';
+                console.log(`Found video: ${title} - ${url}`);
+                return { title, url };
             });
+        });
 
-            // Add unique videos to the map
-            for (const video of results) {
-                if (video.url && !videoMap.has(video.url)) {
+        // Add unique videos to the map
+        for (const video of results) {
+            if (video.url && !videoMap.has(video.url)) {
+                if (!isYouTubeShortUrl(video.url)) {
                     videoMap.set(video.url, video);
                 }
             }
-
-            // Stop if we already reached enough unique videos
-            if (videoMap.size >= maxCount) break;
-
-            // Scroll down for more results
-            await page.evaluate(() => {
-                window.scrollBy(0, window.innerHeight * 0.9);
-            });
-            console.log(`Scrolled down, current unique videos count: ${videoMap.size}`);
-            await page.waitForTimeout(DELAY.SCROLL);
-
-            // Break if no new unique videos were added after scroll (end of results)
-            // can't do this, because page may contain more videos that are not shown, then after scrolling, no new videos are added
-            //if (videoMap.size === prevCount) break;
-            prevCount = videoMap.size;
         }
-        console.log(`Found ${videoMap.size} unique videos for keyword "${keyword}"`);
-        // --- Build a queue of video links ---
-        const detailQueue = Array.from(videoMap.values()).slice(0, maxCount);
 
-        return detailQueue;
+        // Stop if we already reached enough unique videos
+        if (videoMap.size >= maxCount) break;
+
+        // Scroll down for more results
+        await page.evaluate(() => {
+            window.scrollBy(0, window.innerHeight * 0.9);
+        });
+        console.log(`Scrolled down, current unique videos count: ${videoMap.size}`);
+        await page.waitForTimeout(DELAY.SCROLL);
+
+        // Break if no new unique videos were added after scroll (end of results)
+        // can't do this, because page may contain more videos that are not shown, then after scrolling, no new videos are added
+        //if (videoMap.size === prevCount) break;
+        prevCount = videoMap.size;
     }
-    catch (err) {
-        console.error(`Error while handling search for keyword "${keyword}":`, err);
-        throw err; // Re-throw to handle it in main
-    }
+    console.log(`Found ${videoMap.size} unique videos for keyword "${keyword}"`);
+    // --- Build a queue of video links ---
+    const detailQueue = Array.from(videoMap.values()).slice(0, maxCount);
+
+    return detailQueue;
 }
 
 async function scrapeVideoDetail(context: any, video: VideoResult) {
@@ -299,7 +286,6 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
     }
     catch (err) {
         console.error(`Error while processing video "${video.title}":`, err);
-        throw err; // Re-throw to handle it in main
     }
 }
 
