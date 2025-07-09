@@ -1,10 +1,10 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
 import { DELAY } from './constants.js';
-import { isYouTubeShortUrl } from './helper.js';
+import { isVideoAfter, isYouTubeShortUrl } from './helper.js';
 
-type VideoResult = { title: string; url: string };
-type Input = { keywords: string[], maxCount: number };
+type VideoResult = { title: string; url: string, uploadTime: string };
+type Input = { keywords: string[], maxCount: number, startDate?: string };
 
 
 const width = 2048;
@@ -18,6 +18,15 @@ async function main() {
     const keywords: string[] = input?.keywords || [];
     const maxCount: number = input?.maxCount || 20;
 
+    const startDateStr: string | undefined = input?.startDate;
+
+    let startDateObj: Date | undefined = undefined;
+
+    if (startDateStr) {
+        const [year, month, day] = startDateStr.split('-').map(Number);
+        startDateObj = new Date(year, month - 1, day); // month is 0-based in JS
+    }
+
     //const browser = await chromium.launch({ headless: true });
     const browser = await chromium.launch({ headless: false, slowMo: 100, args: [`--window-size=${width},${height}`] });
     const context = await browser.newContext({
@@ -27,7 +36,7 @@ async function main() {
 
     for (const keyword of keywords) {
         try {
-            const detailQueue: VideoResult[] = await search(page, keyword, maxCount);
+            const detailQueue: VideoResult[] = await search(page, keyword, maxCount, startDateObj);
             // --- Process detail pages one by one ---
             for (const video of detailQueue) {
                 await scrapeVideoDetail(context, video);
@@ -45,7 +54,7 @@ async function main() {
     await Actor.exit();
 }
 
-async function search(page: any, keyword: string, maxCount: number) {
+async function search(page: any, keyword: string, maxCount: number, startDateObj?: Date) {
     const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
     await page.goto(url, { waitUntil: 'networkidle' });
     console.log(`Searching for keyword: ${keyword}`);
@@ -71,24 +80,59 @@ async function search(page: any, keyword: string, maxCount: number) {
     while (videoMap.size < maxCount) {
         // Extract video results on current page
         const results: VideoResult[] = await page.evaluate(() => {
+
+            function findAgoTimeSpan(metadataDiv: any) {
+                // Match e.g. "3 minutes ago", "1 hour ago", etc.
+                const agoRegex = /\b\d+\s*(minute|hour|day|week|month|year)s?\s+ago\b/i;
+                const spans = metadataDiv.querySelectorAll('span');
+                for (const span of spans) {
+                    const text = span.textContent && span.textContent.trim();
+                    if (text && agoRegex.test(text)) {
+                        return text; // Return the first matching span's text
+                    }
+                }
+                return null; // No match found
+            }
+
             const videos = Array.from(document.querySelectorAll('ytd-video-renderer'));
-            return videos.map((v) => {
-                const titleElem = v.querySelector('#video-title') as HTMLAnchorElement | null;
+            const results = [];
+            for (const v of videos) {
+                if (v.id == 'processed')
+                    continue; // Skip already processed videos
+                v.id = 'processed'; // Mark as processed to avoid duplicates
+                const titleElem = v.querySelector('#video-title');
                 const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
-                const url = titleElem && titleElem.getAttribute('href') ?
-                    'https://www.youtube.com' + titleElem.getAttribute('href') : '';
-                console.log(`Found video: ${title} - ${url}`);
-                return { title, url };
-            });
+                const url = titleElem && titleElem.getAttribute('href')
+                    ? 'https://www.youtube.com' + titleElem.getAttribute('href')
+                    : '';
+                const metadataDiv = v.querySelector('#metadata-line');
+                const uploadTime = findAgoTimeSpan(metadataDiv);
+                console.log(`Found video: ${title} - ${url} - ${uploadTime}`);
+                results.push({ title, url, uploadTime });
+            }
+            //debugger;
+            return results;
         });
 
         // Add unique videos to the map
         for (const video of results) {
-            if (video.url && !videoMap.has(video.url)) {
-                if (!isYouTubeShortUrl(video.url)) {
-                    videoMap.set(video.url, video);
+            try {
+                if (video.url && !videoMap.has(video.url)) {
+                    console.log(`Processing video: ${video.title} - ${video.url} - ${video.uploadTime}`);
+                    if (!isVideoAfter(startDateObj, video.uploadTime)) {
+                        console.log(`Video "${video.title}" is before start date, skipping.`);
+                        maxCount = videoMap.size - 1; // Stop if video is before startDate
+                        break;
+                    }
+                    if (!isYouTubeShortUrl(video.url)) {
+                        videoMap.set(video.url, video);
+                    }
                 }
             }
+            catch (err) {
+                console.error(`Error processing video "${video.title}":`, err);
+                continue; // Skip this video if any error occurs
+            }   
         }
 
         // Stop if we already reached enough unique videos
