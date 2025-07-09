@@ -85,9 +85,6 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
     // Use a Map to keep track of unique videos by URL
     const videoMap = new Map<string, VideoResult>();
 
-    // Scroll and collect until maxCount unique videos is reached or no new appear
-    let prevCount = 0;
-
     while (videoMap.size < maxCount) {
         // Extract video results on current page
         const results: VideoResult[] = await page.evaluate(() => {
@@ -155,13 +152,10 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
         });
         console.log(`Scrolled down, current unique videos count: ${videoMap.size}`);
         await page.waitForTimeout(DELAY.SCROLL);
-
-        // Break if no new unique videos were added after scroll (end of results)
-        // can't do this, because page may contain more videos that are not shown, then after scrolling, no new videos are added
-        //if (videoMap.size === prevCount) break;
-        prevCount = videoMap.size;
     }
+
     console.log(`Found ${videoMap.size} unique videos for keyword "${keyword}"`);
+
     // --- Build a queue of video links ---
     const detailQueue = Array.from(videoMap.values()).slice(0, maxCount);
 
@@ -257,13 +251,9 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
                 ? 'https://www.youtube.com' + getAttr('ytd-channel-name a', 'href')
                 : '';
             const channelId = channelUrl.split('/').pop() || '';
-            // Video data
-            debugger;
-            //debug start
+            //debugger;
             const subscriberCountStr = getText('#above-the-fold #upload-info #owner-sub-count');
             const subscribers = subscriberCountStr ? extractSubscriberCount(subscriberCountStr) : 0;
-            // Stats
-
 
             const viewStr = getText('.view-count') || getText('span.view-count');
             const viewMatch = (viewStr ?? '').replace(/,/g, '').match(/([\d,]+)/);
