@@ -5,7 +5,11 @@ import { isVideoAfter, isYouTubeShortUrl } from './helper.js';
 
 type VideoResult = { title: string; url: string, uploadTime: string };
 type Input = { keywords: string[], maxCount: number, startDate?: string };
-
+type ParsedInput = {
+    keywords: string[];
+    maxCount: number;
+    startDateObj?: Date;
+};
 
 const width = 2048;
 const height = 1152;
@@ -14,19 +18,11 @@ const height = 1152;
 
 async function main() {
     await Actor.init();
+
     const input = await Actor.getInput() as Input;
-    const keywords: string[] = input?.keywords || [];
-    const maxCount: number = input?.maxCount || 20;
+    const { keywords, maxCount, startDateObj } = parseApifyInput(input);
 
-    const startDateStr: string | undefined = input?.startDate;
-
-    let startDateObj: Date | undefined = undefined;
-
-    if (startDateStr) {
-        const [year, month, day] = startDateStr.split('-').map(Number);
-        startDateObj = new Date(year, month - 1, day); // month is 0-based in JS
-    }
-
+    
     //const browser = await chromium.launch({ headless: true });
     const browser = await chromium.launch({ headless: false, slowMo: 100, args: [`--window-size=${width},${height}`] });
     const context = await browser.newContext({
@@ -52,6 +48,21 @@ async function main() {
 
     await browser.close();
     await Actor.exit();
+}
+
+function parseApifyInput(input: Input): ParsedInput {
+    const keywords = input.keywords ?? [];
+    const maxCount = input.maxCount ?? 20;
+    let startDateObj: Date | undefined = undefined;
+
+    if (input.startDate) {
+        const [year, month, day] = input.startDate.split('-').map(Number);
+        if (year && month && day) {
+            startDateObj = new Date(year, month - 1, day);
+        }
+    }
+
+    return { keywords, maxCount, startDateObj };
 }
 
 async function search(page: any, keyword: string, maxCount: number, startDateObj?: Date) {
