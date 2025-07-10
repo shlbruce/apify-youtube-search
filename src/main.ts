@@ -78,7 +78,6 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
 
     // Click the "Upload date" filter label
     await page.click('div[title="Sort by upload date"]');
-    console.log(`Applied "Upload date" filter for keyword: ${keyword}`);
     await page.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD);
 
 
@@ -102,21 +101,30 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
                 return null; // No match found
             }
 
-            const videos = Array.from(document.querySelectorAll('ytd-video-renderer'));
+            const videosContainers = document.querySelectorAll('#contents');
+
+            if (videosContainers.length === 0) {
+                console.warn('No video containers found on this page.');
+                return [];
+            }
+
             const results = [];
-            for (const v of videos) {
-                if (v.id == 'processed')
-                    continue; // Skip already processed videos
-                v.id = 'processed'; // Mark as processed to avoid duplicates
-                const titleElem = v.querySelector('#video-title');
-                const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
-                const url = titleElem && titleElem.getAttribute('href')
-                    ? 'https://www.youtube.com' + titleElem.getAttribute('href')
-                    : '';
-                const metadataDiv = v.querySelector('#metadata-line');
-                const uploadTime = findAgoTimeSpan(metadataDiv);
-                console.log(`Found video: ${title} - ${url} - ${uploadTime}`);
-                results.push({ title, url, uploadTime });
+            for (const videosContainer of videosContainers) {
+                videosContainer.id = 'contents-1'; // Mark as processed to avoid duplicates
+
+                const videos = Array.from(videosContainer.querySelectorAll('ytd-video-renderer'));
+                for (const v of videos) {
+                    const titleElem = v.querySelector('#video-title');
+                    const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
+                    const url = titleElem && titleElem.getAttribute('href')
+                        ? 'https://www.youtube.com' + titleElem.getAttribute('href')
+                        : '';
+                    const metadataDiv = v.querySelector('#metadata-line');
+                    const uploadTime = findAgoTimeSpan(metadataDiv);
+                    //handle live, when uploadTime is null
+                    console.log(`Found video: ${title} - ${url} - ${uploadTime}`);
+                    results.push({ title, url, uploadTime });
+                }
             }
             //debugger;
             return results;
