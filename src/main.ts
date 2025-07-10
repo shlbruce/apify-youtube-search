@@ -1,7 +1,6 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright';
 import { DELAY } from './constants.js';
-import { isVideoAfter, isYouTubeShortUrl } from './helper.js';
 
 type VideoResult = { title: string; url: string, uploadTime: string };
 type Input = { keywords: string[], maxCount: number, startDate?: string };
@@ -65,7 +64,7 @@ function parseApifyInput(input: Input): ParsedInput {
     return { keywords, maxCount, startDateObj };
 }
 
-async function search(page: any, keyword: string, maxCount: number, startDateObj?: Date) {
+async function search(page: any, keyword: string, maxCount: number, startDateObj: Date | undefined) {
     const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}`;
     await page.goto(url, { waitUntil: 'networkidle' });
     console.log(`Searching for keyword: ${keyword}`);
@@ -86,7 +85,7 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
 
     while (videoMap.size < maxCount) {
         // Extract video results on current page
-        const results: VideoResult[] = await page.evaluate(() => {
+        const results: VideoResult[] = await page.evaluate((startDateObj: Date | undefined) => {
 
             function findAgoTimeSpan(metadataDiv: any) {
                 // Match e.g. "3 minutes ago", "1 hour ago", etc.
@@ -101,6 +100,53 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
                 return null; // No match found
             }
 
+            function isYouTubeShortUrl(url: string): boolean {
+                try {
+                    const u = new URL(url);
+                    return u.hostname.endsWith('youtube.com') && u.pathname.startsWith('/shorts/');
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            function timeAgoToMinutes(str: string) {
+                const regex = /(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago/i;
+                const match = str.match(regex);
+                if (!match) return null;
+            
+                const value = parseInt(match[1], 10);
+                const unit = match[2].toLowerCase();
+            
+                const factors = {
+                    minute: 1,
+                    hour: 60,
+                    day: 60 * 24,
+                    week: 60 * 24 * 7,
+                    month: 60 * 24 * 30,  // Approximate
+                    year: 60 * 24 * 365   // Approximate
+                };
+            
+                // Check if unit is a key in factors for extra safety
+                if (!(unit in factors)) return null;
+            
+                return value * factors[unit as keyof typeof factors];
+            }
+                       
+
+            function isVideoAfter(specificDate: Date | undefined, timeAgoStr: string): boolean {
+                if (!specificDate) {
+                    return true;
+                }
+                const minutesAgo = timeAgoToMinutes(timeAgoStr);
+                if (minutesAgo === null) return true;
+            
+                const now = new Date();
+                const minutesSinceSpecificDate = Math.floor((now.getTime() - specificDate.getTime()) / 60000);
+            
+                // If video was uploaded more recently than specificDate, return true
+                return minutesAgo < minutesSinceSpecificDate;
+            }
+                  
             const videosContainers = document.querySelectorAll('#contents');
 
             if (videosContainers.length === 0) {
@@ -119,30 +165,33 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
                     const url = titleElem && titleElem.getAttribute('href')
                         ? 'https://www.youtube.com' + titleElem.getAttribute('href')
                         : '';
+
+                    if (isYouTubeShortUrl(url)) {
+                        continue;
+                    }
+
                     const metadataDiv = v.querySelector('#metadata-line');
                     const uploadTime = findAgoTimeSpan(metadataDiv);
+
+                    if (!isVideoAfter(startDateObj, uploadTime)) {
+                        console.log(`Video "${title}" is before start date ${startDateObj}, skipping.`);
+                        maxCount = 0; // Stop if video is before startDate
+                        break;
+                    }
                     //handle live, when uploadTime is null
-                    console.log(`Found video: ${title} - ${url} - ${uploadTime}`);
                     results.push({ title, url, uploadTime });
                 }
             }
             //debugger;
             return results;
-        });
+        }, startDateObj);
 
         // Add unique videos to the map
         for (const video of results) {
             try {
                 if (video.url && !videoMap.has(video.url)) {
-                    console.log(`Processing video: ${video.title} - ${video.url} - ${video.uploadTime}`);
-                    if (!isVideoAfter(startDateObj, video.uploadTime)) {
-                        console.log(`Video "${video.title}" is before start date, skipping.`);
-                        maxCount = videoMap.size - 1; // Stop if video is before startDate
-                        break;
-                    }
-                    if (!isYouTubeShortUrl(video.url)) {
-                        videoMap.set(video.url, video);
-                    }
+                    console.log(`Found video: ${video.title} - ${video.url} - ${video.uploadTime}`);
+                    videoMap.set(video.url, video);
                 }
             }
             catch (err) {
@@ -175,7 +224,7 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
         const videoPage = await context.newPage();
         await videoPage.goto(video.url, { waitUntil: 'domcontentloaded' });
         await videoPage.waitForTimeout(DELAY.PARTIAL_PAGE_LOAD); // Let content load
-        console.log(`Processing video: ${video.title} - ${video.url}`);
+        console.log(`Processing video: ${video.title} - ${video.url} - ${video.uploadTime}`);
 
         await videoPage.evaluate(() => {
             window.scrollBy(0, window.innerHeight * 0.3);
