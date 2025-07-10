@@ -3,9 +3,9 @@ import { chromium } from 'playwright';
 import { DELAY } from './constants.js';
 
 type VideoResult = { title: string; url: string, uploadTime: string };
-type Input = { keywords: string[], maxCount: number, startDate?: string };
+type Input = { searchWords: string[], maxCount: number, startDate?: string };
 type ParsedInput = {
-    keywords: string[];
+    searchWords: string[];
     maxCount: number;
     startDateObj?: Date;
 };
@@ -19,7 +19,7 @@ async function main() {
     await Actor.init();
 
     const input = await Actor.getInput() as Input;
-    const { keywords, maxCount, startDateObj } = parseApifyInput(input);
+    const { searchWords, maxCount, startDateObj } = parseApifyInput(input);
 
     
     //const browser = await chromium.launch({ headless: true });
@@ -29,18 +29,18 @@ async function main() {
     });
     const page = await context.newPage();
 
-    for (const keyword of keywords) {
+    for (const words of searchWords) {
         try {
-            const detailQueue: VideoResult[] = await search(page, keyword, maxCount, startDateObj);
+            const detailQueue: VideoResult[] = await search(page, words, maxCount, startDateObj);
             // --- Process detail pages one by one ---
             for (const video of detailQueue) {
-                await scrapeVideoDetail(context, video);
+                await scrapeVideoDetail(context, video, words);
             }
 
-            console.log(`Finished processing keyword: ${keyword} : ${detailQueue.length} video`);
+            console.log(`Finished processing keyword: ${words} : ${detailQueue.length} video`);
         }
         catch (err) {
-            console.error(`Error while processing keyword "${keyword}":`, err);
+            console.error(`Error while processing keyword "${words}":`, err);
             continue; // Skip this keyword if any error occurs
         }
     }
@@ -50,7 +50,7 @@ async function main() {
 }
 
 function parseApifyInput(input: Input): ParsedInput {
-    const keywords = input.keywords ?? [];
+    const searchWords = input.searchWords ?? [];
     const maxCount = input.maxCount ?? 20;
     let startDateObj: Date | undefined = undefined;
 
@@ -61,7 +61,7 @@ function parseApifyInput(input: Input): ParsedInput {
         }
     }
 
-    return { keywords, maxCount, startDateObj };
+    return { searchWords, maxCount, startDateObj };
 }
 
 async function search(page: any, keyword: string, maxCount: number, startDateObj: Date | undefined) {
@@ -147,19 +147,25 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
                 return minutesAgo < minutesSinceSpecificDate;
             }
                   
-            const videosContainers = document.querySelectorAll('#contents');
-
+            const videosContainers = document.querySelectorAll('ytd-search #primary #contents #contents');
+            debugger;
             if (videosContainers.length === 0) {
                 console.warn('No video containers found on this page.');
                 return [];
             }
 
             const results = [];
-            for (const videosContainer of videosContainers) {
-                videosContainer.id = 'contents-1'; // Mark as processed to avoid duplicates
-
+            for (let i = 0; i < videosContainers.length; i++) {
+                const videosContainer = videosContainers[i];
+                if (i != videosContainers.length-1) {
+                    videosContainer.id = 'contents-1'; // Mark as processed to avoid duplicates
+                }
                 const videos = Array.from(videosContainer.querySelectorAll('ytd-video-renderer'));
                 for (const v of videos) {
+                    if (v.id === 'prcessed-video') {
+                        continue; // Skip already processed videos
+                    }
+                    v.id = "prcessed-video";
                     const titleElem = v.querySelector('#video-title');
                     const title = titleElem && titleElem.textContent ? titleElem.textContent.trim() : '';
                     const url = titleElem && titleElem.getAttribute('href')
@@ -170,15 +176,22 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
                         continue;
                     }
 
+                    let uploadTime = '0 minutes ago'; // Default value if not found
                     const metadataDiv = v.querySelector('#metadata-line');
-                    const uploadTime = findAgoTimeSpan(metadataDiv);
+                    try {
+                        uploadTime = findAgoTimeSpan(metadataDiv);
 
-                    if (!isVideoAfter(startDateObj, uploadTime)) {
-                        console.log(`Video "${title}" is before start date ${startDateObj}, skipping.`);
-                        maxCount = 0; // Stop if video is before startDate
-                        break;
+                        if (!isVideoAfter(startDateObj, uploadTime)) {
+                            console.log(`Video "${title}" is before start date ${startDateObj}, skipping.`);
+                            maxCount = 0; // Stop if video is before startDate
+                            break;
+                        }
                     }
-                    //handle live, when uploadTime is null
+                    catch (err) {
+                         //handle live, when uploadTime is null
+                        console.warn(`Error processing upload time for video "${title}" - "${url}:`, err);
+                        continue; // Skip this video if any error occurs
+                    }
                     results.push({ title, url, uploadTime });
                 }
             }
@@ -219,7 +232,7 @@ async function search(page: any, keyword: string, maxCount: number, startDateObj
     return detailQueue;
 }
 
-async function scrapeVideoDetail(context: any, video: VideoResult) {
+async function scrapeVideoDetail(context: any, video: VideoResult, words: string) {
     try {
         const videoPage = await context.newPage();
         await videoPage.goto(video.url, { waitUntil: 'domcontentloaded' });
@@ -244,7 +257,7 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
         }
 
         // Scrape details using page.evaluate for info you want
-        const detail = await videoPage.evaluate(async () => {
+        const detail = await videoPage.evaluate(async (words: string) => {
             //Extract channel info and other elements
             function getText(sel: string) {
                 const el = document.querySelector(sel);
@@ -346,6 +359,7 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
             const commentCount = extractNumber(comments);
 
             return {
+                searchWords: words,
                 type: 'video',
                 id: new URL(window.location.href).searchParams.get('v') || window.location.pathname.split('/').pop(),
                 title: removeYouTubeSuffix(window.document.title),
@@ -380,7 +394,7 @@ async function scrapeVideoDetail(context: any, video: VideoResult) {
                     endDate
                 }
             };
-        });
+        }, words);
 
         // Push result to dataset
         await Actor.pushData(detail);
